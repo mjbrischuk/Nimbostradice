@@ -1,10 +1,17 @@
 from app import app
+from app import db, bcrypt
+from app.models import User
+
 from flask import request
 from flask import url_for
-from markupsafe import escape
 from flask import render_template
 from flask import session
 from flask import redirect
+from flask import send_from_directory
+
+from sqlalchemy import or_
+
+from markupsafe import escape
 
 @app.route("/hello")
  # example of request.args + escaping injected html
@@ -30,26 +37,49 @@ def login_get():
 @app.post('/login')
 def login_post():
 # request.form is a dict -> form['userInput']=='asdf'  ,  form['pwInput']=='zxcv'
-    print("request.form: ")
-    print(request.form)
-    print(session)
-    session['userInput'] = request.form['userInput']
-    if request.form.get('rememberMeCheck'):
-        session.permanent = True
-    print(session)
+    user_id = request.form.get('userInput')
+    password = request.form.get('pwInput')
 
-    redirect_url = url_for('helloName', name=request.form.get('userInput'))
-    return redirect(redirect_url)
-    # if valid_login(request.form['userInput'],
-    #                request.form['pwInput']):
-    #     return log_the_user_in(request.form['userInput'])
-    # else:
-    #     error = 'Invalid username/password'
-    #     # the code below is executed if the request method
-    #     # was GET or the credentials were invalid
-    #    return render_template('login.html', error=error)
+    user = User.query.filter(
+        or_(User.username == user_id, User.email == user_id)
+    ).first()
 
+    if user and bcrypt.check_password_hash(user.password, password):
+        if request.form.get('rememberMeCheck'):
+            session.permanent = True
+        session['user_id'] = user.id
+        redirect_url = url_for('helloName', name=user.username)
+        return redirect(redirect_url)
+    else:
+        # todo: add a flash message explaining the login failed
+        return render_template('login.html', error='Invalid username or password')
 
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login_get'))
+
+@app.route('/register')
+def register_get():
+    return render_template('register.html')
+@app.route('/register', methods=['POST'])
+def register_post():
+    if not app.config['REGISTRATION_OPEN']:
+        return 'Registration is closed', 403
+
+    username = request.form['username']
+    email = request.form['email']
+    password = bcrypt.generate_password_hash(request.form['password']).decode('utf-8')
+
+    user = User(username=username, email=email, password=password)
+    db.session.add(user)
+    db.session.commit()
+
+    return redirect(url_for('login_get'))
 @app.route('/test')
 def test():
     return render_template('test.html',)
+
+@app.route('/robots.txt')
+def robots():
+    return send_from_directory(app.static_folder, 'robots.txt')
